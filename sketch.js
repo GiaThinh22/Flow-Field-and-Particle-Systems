@@ -1,40 +1,38 @@
 let cols = 80;
 let rows = 80;
-let gridSize = 10;
-
+let gridSize;
 let terrain = [];
-let noiseScale = 0.1;
-
+let vectors = [];
 let particles = [];
-let numParticles = 400;
-
+let numParticles = 600;
+let noiseScale = 0.08;
 let gridInput;
 
 function setup() {
   createCanvas(800, 800);
-
-  gridInput = createInput(cols);
+  gridSize = width / cols;
+  
+  gridInput = createInput(cols.toString());
   gridInput.position(10, 10);
-  gridInput.size(60);
+  gridInput.size(40);
 
-  let button = createButton("Update Grid");
-  button.position(80, 10);
+  let button = createButton("Update");
+  button.position(60, 10);
   button.mousePressed(updateGrid);
 
   generateTerrain();
+  generateFlowField();
 
   for (let i = 0; i < numParticles; i++) {
     particles.push(new Particle());
   }
-
-  // disable browser right-click menu
+  
+  background(0);
   document.oncontextmenu = () => false;
 }
 
 function generateTerrain() {
   terrain = [];
-  gridSize = width / cols;
-
   for (let x = 0; x < cols; x++) {
     terrain[x] = [];
     for (let y = 0; y < rows; y++) {
@@ -43,16 +41,37 @@ function generateTerrain() {
   }
 }
 
+function generateFlowField() {
+  vectors = [];
+  for (let x = 0; x < cols; x++) {
+    vectors[x] = [];
+    for (let y = 0; y < rows; y++) {
+      let x1 = x > 0 ? terrain[x - 1][y] : terrain[x][y];
+      let x2 = x < cols - 1 ? terrain[x + 1][y] : terrain[x][y];
+      let y1 = y > 0 ? terrain[x][y - 1] : terrain[x][y];
+      let y2 = y < rows - 1 ? terrain[x][y + 1] : terrain[x][y];
+      
+      let v = createVector(x1 - x2, y1 - y2);
+      v.normalize();
+      vectors[x][y] = v;
+    }
+  }
+}
+
 function updateGrid() {
   cols = int(gridInput.value());
   rows = cols;
+  gridSize = width / cols;
   generateTerrain();
+  generateFlowField();
+  background(0);
 }
 
 function draw() {
-  background(0);
+  fill(0, 25);
+  rect(0, 0, width, height);
 
-  drawTerrain();
+  drawGhostGrid();
 
   for (let p of particles) {
     p.update();
@@ -60,138 +79,82 @@ function draw() {
   }
 }
 
-function drawTerrain() {
+function drawGhostGrid() {
   noStroke();
-
   for (let x = 0; x < cols; x++) {
     for (let y = 0; y < rows; y++) {
-
-      let h = terrain[x][y] * 255;
-      fill(255-h);
-
+      let val = terrain[x][y] * 255;
+      fill(255 - val, 8); 
       rect(x * gridSize, y * gridSize, gridSize, gridSize);
     }
   }
 }
 
-function mousePressed() {
-  modifyTerrain();
-}
-
 function mouseDragged() {
-  modifyTerrain();
-}
-
-function modifyTerrain() {
-
   let gx = floor(mouseX / gridSize);
   let gy = floor(mouseY / gridSize);
-
-  let radius = 4;
+  let radius = 5;
 
   for (let x = -radius; x <= radius; x++) {
     for (let y = -radius; y <= radius; y++) {
-
       let nx = gx + x;
       let ny = gy + y;
-
       if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
-
-        let d = dist(0,0,x,y);
+        let d = dist(0, 0, x, y);
         if (d < radius) {
-
-          let strength = 0.03 * (1 - d/radius);
-
-          if (mouseButton === LEFT) {
-            terrain[nx][ny] += strength;
-          }
-
-          if (mouseButton === RIGHT) {
-            terrain[nx][ny] -= strength;
-          }
-
-          terrain[nx][ny] = constrain(terrain[nx][ny],0,1);
+          let strength = 0.04 * (1 - d / radius);
+          if (mouseIsPressed && mouseButton === LEFT) terrain[nx][ny] += strength;
+          if (mouseIsPressed && mouseButton === RIGHT) terrain[nx][ny] -= strength;
+          terrain[nx][ny] = constrain(terrain[nx][ny], 0, 1);
         }
       }
     }
   }
+  generateFlowField();
 }
 
 class Particle {
-
   constructor() {
-    // spawn more toward bottom-right
-    this.pos = createVector(random(width * 0.6, width * 0.9), random(height * 0.6, height * 0.9));
+    this.init();
+  }
+
+  init() {
+    this.pos = createVector(random(width), random(height));
+    this.prevPos = this.pos.copy();
     this.vel = createVector(0, 0);
-    this.maxSpeed = 2.5;
+    this.acc = createVector(0, 0);
+    this.maxSpeed = random(2, 4);
   }
 
   update() {
-
     let gx = floor(this.pos.x / gridSize);
     let gy = floor(this.pos.y / gridSize);
 
-    if (gx >= 1 && gx < cols-1 && gy >= 1 && gy < rows-1) {
-
-      let current = terrain[gx][gy];
-
-      let lowest = current;
-      let bestDir = createVector(0,0);
-
-      // check neighbors for downhill direction
-      for (let x = -1; x <= 1; x++) {
-        for (let y = -1; y <= 1; y++) {
-
-          if (x == 0 && y == 0) continue;
-
-          let nx = gx + x;
-          let ny = gy + y;
-
-          let h = terrain[nx][ny];
-
-          if (h < lowest) {
-            lowest = h;
-            bestDir = createVector(x, y);
-          }
-        }
-      }
-
-      bestDir.normalize();
-
-      // downhill strength depends on slope
-      let slope = current - lowest;
-      bestDir.mult(slope * 4);
-
-      // global wind (bottom-right -> top-left)
-      let wind = createVector(-0.3, -0.3);
-
-      // high terrain resists movement
-      let resistance = map(current, 0, 1, 1, 0.2);
-      wind.mult(resistance);
-
-      this.vel.add(bestDir);
-      this.vel.add(wind);
-      this.vel.limit(this.maxSpeed);
+    if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
+      let force = vectors[gx][gy].copy();
+      let altitude = terrain[gx][gy];
+      
+      let wind = createVector(-0.25, -0.25);
+      wind.mult(map(altitude, 0, 1, 1, 0.1));
+      
+      this.acc.add(force);
+      this.acc.add(wind);
     }
 
+    this.vel.add(this.acc);
+    this.vel.limit(this.maxSpeed);
     this.pos.add(this.vel);
+    this.acc.mult(0);
 
-    // respawn when reaching top-left area
-    if (this.pos.x < 0){
-      this.pos = createVector(height-this.pos.y,height);
-    }
-    else if (this.pos.y < 0) {
-      this.pos = createVector(width,width-this.pos.x);
+    if (this.pos.x < 0 || this.pos.x > width || this.pos.y < 0 || this.pos.y > height) {
+      this.init();
     }
   }
 
   show() {
-    push();
-    fill(0, 200, 255);
-    noStroke();
-    circle(this.pos.x, this.pos.y, 5);
-    pop();
+    stroke(0, 180, 255, 180);
+    strokeWeight(1.5);
+    line(this.pos.x, this.pos.y, this.prevPos.x, this.prevPos.y);
+    this.prevPos = this.pos.copy();
   }
 }
-
-
